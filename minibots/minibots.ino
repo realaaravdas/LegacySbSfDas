@@ -5,41 +5,6 @@
 #include <stdlib.h>
 #include "transform.h"
 
-// ESP32 PWM compatibility layer - direct ESP32 register access
-#ifdef ARDUINO_ARCH_ESP32
-  #include "esp32-hal-gpio.h"
-  #include "rom/lldesc.h"
-  #include "driver/ledc.h"
-  
-  // Direct LEDC API for better compatibility
-  void esp32_setup_pwm(int pin, int channel, int freq = 5000, int resolution = 8) {
-    ledc_timer_config_t timer_conf = {
-      .speed_mode = LEDC_LOW_SPEED_MODE,
-      .timer_num = (ledc_timer_t)(channel / 2),
-      .duty_resolution = (ledc_timer_bit_t)resolution,
-      .freq_hz = freq,
-      .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&timer_conf);
-    
-    ledc_channel_config_t channel_conf = {
-      .gpio_num = (gpio_num_t)pin,
-      .speed_mode = LEDC_LOW_SPEED_MODE,
-      .channel = (ledc_channel_t)(channel % 8),
-      .intr_type = LEDC_INTR_DISABLE,
-      .timer_sel = (ledc_timer_t)(channel / 2),
-      .duty = 0,
-      .hpoint = 0
-    };
-    ledc_channel_config(&channel_conf);
-  }
-  
-  void esp32_write_pwm(int channel, int duty) {
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)(channel % 8), duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)(channel % 8));
-  }
-#endif
-
 // WiFi network credentials
 const char* ssid = "ROBOTWIFINET";
 const char* password = "robo8711$$W";
@@ -52,67 +17,61 @@ const int dataPort = 2380;
 char incomingPacket[255];
 const char* robotName = "minibotTestingDas";
 
-
-// Motor pins
-int leftMotorPin = 16;
-int rightMotorPin = 19;
-
-// PWM settings
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
-const int leftMotorChannel = 0;
-const int rightMotorChannel = 1;
-
-// Custom PWM function wrapper - ESP32 compatible
-void setupPWM(int pin, int channel) {
-  #ifdef ARDUINO_ARCH_ESP32
-    // Use direct ESP32 LEDC API
-    esp32_setup_pwm(pin, channel, pwmFreq, pwmResolution);
-  #else
-    // Fallback to Arduino standard PWM
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
-  #endif
-}
-
-void writePWM(int channel, int value) {
-  #ifdef ARDUINO_ARCH_ESP32
-    // Use direct ESP32 LEDC API
-    esp32_write_pwm(channel, value);
-  #else
-    // Fallback - simulate PWM with digital output (rough approximation)
-    if (channel == 0) {
-      digitalWrite(leftMotorPin, (value > 127) ? HIGH : LOW);
-    } else if (channel == 1) {
-      digitalWrite(rightMotorPin, (value > 127) ? HIGH : LOW);
-    }
-  #endif
-}
+// Motor pins - original hardware configuration
+int leftMotorPin = 16;  // GPIO16 - Original left motor pin
+int rightMotorPin = 19; // GPIO19 - Original right motor pin
 
 Transform transformer(true, false);
 
 void setup() {
   Serial.begin(115200);
+  delay(1000); // Give serial time to initialize
+  
+  Serial.println("ESP32 Minibots - Simple Working Version");
+  Serial.println("=====================================");
 
   // Connect to WiFi
+  Serial.println("Connecting to WiFi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.println("Connecting to WiFi...");
+    Serial.print(".");
   }
+  Serial.println();
   Serial.println("Connected to WiFi");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
-  // Setup PWM
-  setupPWM(leftMotorPin, leftMotorChannel);
-  setupPWM(rightMotorPin, rightMotorChannel);
+  // Setup PWM output - simple approach
+  Serial.println("Setting up PWM for motor control...");
+  pinMode(leftMotorPin, OUTPUT);
+  pinMode(rightMotorPin, OUTPUT);
+  
+  // Test motor output
+  Serial.println("Testing motor connections...");
+  analogWrite(leftMotorPin, 0);
+  analogWrite(rightMotorPin, 0);
+  
+  // Brief test pulses
+  Serial.println("Left motor test (2 seconds)...");
+  analogWrite(leftMotorPin, 128); // 50% duty
+  delay(2000);
+  analogWrite(leftMotorPin, 0);
+  
+  Serial.println("Right motor test (2 seconds)...");
+  analogWrite(rightMotorPin, 128); // 50% duty  
+  delay(2000);
+  analogWrite(rightMotorPin, 0);
+  
+  Serial.println("Motor test completed. Motors at rest.");
 
   // Start UDP listeners
   broadcastUdp.begin(broadcastPort);
   dataUdp.begin(dataPort);
   Serial.printf("Broadcast UDP server started on port %d\n", broadcastPort);
   Serial.printf("Data UDP server started on port %d\n", dataPort);
+  
+  Serial.println("Setup complete. Ready for DriverStation connection.");
 }
 
 void loop() {
@@ -129,6 +88,8 @@ void loop() {
     broadcastUdp.beginPacket(broadcastUdp.remoteIP(), broadcastUdp.remotePort());
     broadcastUdp.write((const uint8_t*)response.c_str(), response.length());
     broadcastUdp.endPacket();
+    
+    Serial.println("Responded to broadcast packet");
   }
 
   // Handle data packets
@@ -139,10 +100,15 @@ void loop() {
       incomingPacket[len] = 0;
     }
     
+    Serial.print("Received data packet: ");
+    Serial.println(incomingPacket);
+    
     if (strncmp(incomingPacket, "!ROB#", 5) == 0) {
       parseRobData(incomingPacket);
     }
   }
+  
+  delay(10); // Small delay to prevent overwhelming
 }
 
 void parseRobData(char* data) {
@@ -156,11 +122,11 @@ void parseRobData(char* data) {
   token = strtok(p, ":?");
   while (token != NULL && i < 8) {
     values[i++] = atoi(token);
-    token = strtok(NULL, ":?");
     Serial.print("Value ");
     Serial.print(i-1);
     Serial.print(": ");
     Serial.println(values[i-1]);
+    token = strtok(NULL, ":?");
   }
 
   if (i >= 2) {  // Only need first 2 values for basic control
@@ -175,13 +141,28 @@ void parseRobData(char* data) {
     int leftMotorSpeed, rightMotorSpeed;
     transformer.transform(leftY, rightX, leftMotorSpeed, rightMotorSpeed);
 
-    Serial.print("Left Motor: ");
+    Serial.print("Left Motor PWM: ");
     Serial.print(leftMotorSpeed);
-    Serial.print(", Right Motor: ");
+    Serial.print(", Right Motor PWM: ");
     Serial.println(rightMotorSpeed);
 
-    writePWM(leftMotorChannel, leftMotorSpeed);
-    writePWM(rightMotorChannel, rightMotorSpeed);
+    // Apply motor control
+    analogWrite(leftMotorPin, leftMotorSpeed);
+    analogWrite(rightMotorPin, rightMotorSpeed);
+    
+    // Fallback digital control if analogWrite fails
+    if (leftMotorSpeed > 127) {
+      digitalWrite(leftMotorPin, HIGH);
+    } else {
+      digitalWrite(leftMotorPin, LOW);
+    }
+    
+    if (rightMotorSpeed > 127) {
+      digitalWrite(rightMotorPin, HIGH);
+    } else {
+      digitalWrite(rightMotorPin, LOW);
+    }
+    
   } else {
     Serial.println("Insufficient data received");
   }
