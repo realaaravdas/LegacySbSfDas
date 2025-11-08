@@ -7,9 +7,13 @@ const char* ssid = "YOUR_SSID";
 const char* password = "YOUR_PASSWORD";
 
 // UDP settings
-WiFiUDP udp;
-const int udpPort = 2380;
+WiFiUDP broadcastUdp;
+WiFiUDP dataUdp;
+const int broadcastPort = 2367;
+const int dataPort = 2380;
 char incomingPacket[255];
+const char* robotName = "minibot";
+
 
 // Motor pins
 int leftMotorPin = 16;
@@ -42,29 +46,64 @@ void setup() {
   ledcAttachPin(leftMotorPin, leftMotorChannel);
   ledcAttachPin(rightMotorPin, rightMotorChannel);
 
-  // Start UDP listener
-  udp.begin(udpPort);
-  Serial.printf("UDP server started on port %d\n", udpPort);
+  // Start UDP listeners
+  broadcastUdp.begin(broadcastPort);
+  dataUdp.begin(dataPort);
+  Serial.printf("Broadcast UDP server started on port %d\n", broadcastPort);
+  Serial.printf("Data UDP server started on port %d\n", dataPort);
 }
 
 void loop() {
-  int packetSize = udp.parsePacket();
-  if (packetSize) {
-    int len = udp.read(incomingPacket, 255);
+  // Handle broadcast packets
+  int broadcastPacketSize = broadcastUdp.parsePacket();
+  if (broadcastPacketSize) {
+    int len = broadcastUdp.read(incomingPacket, 255);
+    if (len > 0) {
+      incomingPacket[len] = 0;
+    }
+    // The broadcast message from the host is its IP address.
+    // We just need to respond to the sender with our robot name.
+    String response = "ROB:" + String(robotName);
+    broadcastUdp.beginPacket(broadcastUdp.remoteIP(), broadcastUdp.remotePort());
+    broadcastUdp.write((const uint8_t*)response.c_str(), response.length());
+    broadcastUdp.endPacket();
+  }
+
+  // Handle data packets
+  int dataPacketSize = dataUdp.parsePacket();
+  if (dataPacketSize) {
+    int len = dataUdp.read(incomingPacket, 255);
     if (len > 0) {
       incomingPacket[len] = 0;
     }
     
-    // Expected format: "JOY:LX:LY:RX:RY"
-    if (strncmp(incomingPacket, "JOY:", 4) == 0) {
-      int lx, ly, rx, ry;
-      sscanf(incomingPacket, "JOY:%d:%d:%d:%d", &lx, &ly, &rx, &ry);
-
-      int leftMotorSpeed, rightMotorSpeed;
-      transformer.transform(ly, rx, leftMotorSpeed, rightMotorSpeed);
-
-      ledcWrite(leftMotorChannel, leftMotorSpeed);
-      ledcWrite(rightMotorChannel, rightMotorSpeed);
+    if (strncmp(incomingPacket, "!ROB#", 5) == 0) {
+      parseRobData(incomingPacket);
     }
+  }
+}
+
+void parseRobData(char* data) {
+  char* p = data;
+  p += 5; // Skip "!ROB#"
+  char* token;
+  int values[8];
+  int i = 0;
+  
+  token = strtok(p, ":?");
+  while (token != NULL && i < 8) {
+    values[i++] = atoi(token);
+    token = strtok(NULL, ":?");
+  }
+
+  if (i == 8) {
+    int leftY = values[0];
+    int rightX = values[1];
+    
+    int leftMotorSpeed, rightMotorSpeed;
+    transformer.transform(leftY, rightX, leftMotorSpeed, rightMotorSpeed);
+
+    ledcWrite(leftMotorChannel, leftMotorSpeed);
+    ledcWrite(rightMotorChannel, rightMotorSpeed);
   }
 }
