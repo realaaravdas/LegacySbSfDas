@@ -5,41 +5,6 @@
 #include <stdlib.h>
 #include "transform.h"
 
-// ESP32 PWM compatibility layer - direct ESP32 register access
-#ifdef ARDUINO_ARCH_ESP32
-  #include "esp32-hal-gpio.h"
-  #include "rom/lldesc.h"
-  #include "driver/ledc.h"
-  
-  // Direct LEDC API for better compatibility
-  void esp32_setup_pwm(int pin, int channel, int freq = 5000, int resolution = 8) {
-    ledc_timer_config_t timer_conf = {
-      .speed_mode = LEDC_LOW_SPEED_MODE,
-      .timer_num = (ledc_timer_t)(channel / 2),
-      .duty_resolution = (ledc_timer_bit_t)resolution,
-      .freq_hz = freq,
-      .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&timer_conf);
-    
-    ledc_channel_config_t channel_conf = {
-      .gpio_num = (gpio_num_t)pin,
-      .speed_mode = LEDC_LOW_SPEED_MODE,
-      .channel = (ledc_channel_t)(channel % 8),
-      .intr_type = LEDC_INTR_DISABLE,
-      .timer_sel = (ledc_timer_t)(channel / 2),
-      .duty = 0,
-      .hpoint = 0
-    };
-    ledc_channel_config(&channel_conf);
-  }
-  
-  void esp32_write_pwm(int channel, int duty) {
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)(channel % 8), duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)(channel % 8));
-  }
-#endif
-
 // WiFi network credentials
 const char* ssid = "ROBOTWIFINET";
 const char* password = "robo8711$$W";
@@ -52,42 +17,9 @@ const int dataPort = 2380;
 char incomingPacket[255];
 const char* robotName = "minibotTestingDas";
 
-
-// Motor pins
-int leftMotorPin = 16;
-int rightMotorPin = 19;
-
-// PWM settings
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
-const int leftMotorChannel = 0;
-const int rightMotorChannel = 1;
-
-// Custom PWM function wrapper - ESP32 compatible
-void setupPWM(int pin, int channel) {
-  #ifdef ARDUINO_ARCH_ESP32
-    // Use direct ESP32 LEDC API
-    esp32_setup_pwm(pin, channel, pwmFreq, pwmResolution);
-  #else
-    // Fallback to Arduino standard PWM
-    pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
-  #endif
-}
-
-void writePWM(int channel, int value) {
-  #ifdef ARDUINO_ARCH_ESP32
-    // Use direct ESP32 LEDC API
-    esp32_write_pwm(channel, value);
-  #else
-    // Fallback - simulate PWM with digital output (rough approximation)
-    if (channel == 0) {
-      digitalWrite(leftMotorPin, (value > 127) ? HIGH : LOW);
-    } else if (channel == 1) {
-      digitalWrite(rightMotorPin, (value > 127) ? HIGH : LOW);
-    }
-  #endif
-}
+// Motor pins - original hardware configuration
+int leftMotorPin = 16;  // GPIO16 - Original left motor pin
+int rightMotorPin = 19; // GPIO19 - Original right motor pin
 
 Transform transformer(true, false);
 
@@ -104,9 +36,26 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
-  // Setup PWM
-  setupPWM(leftMotorPin, leftMotorChannel);
-  setupPWM(rightMotorPin, rightMotorChannel);
+  // Setup PWM output for ESP32
+  pinMode(leftMotorPin, OUTPUT);
+  pinMode(rightMotorPin, OUTPUT);
+  
+  // Test if analogWrite works on these pins
+  Serial.println("Testing PWM capability...");
+  analogWrite(leftMotorPin, 0);
+  delay(100);
+  analogWrite(rightMotorPin, 0);
+  delay(100);
+  
+  // Quick test cycle to verify motor connection
+  analogWrite(leftMotorPin, 64);   // ~25% duty cycle
+  delay(1000);
+  analogWrite(leftMotorPin, 0);
+  analogWrite(rightMotorPin, 64);  // ~25% duty cycle  
+  delay(1000);
+  analogWrite(rightMotorPin, 0);
+  
+  Serial.println("PWM pins initialized and tested");
 
   // Start UDP listeners
   broadcastUdp.begin(broadcastPort);
@@ -129,6 +78,8 @@ void loop() {
     broadcastUdp.beginPacket(broadcastUdp.remoteIP(), broadcastUdp.remotePort());
     broadcastUdp.write((const uint8_t*)response.c_str(), response.length());
     broadcastUdp.endPacket();
+    
+    Serial.println("Responded to broadcast");
   }
 
   // Handle data packets
@@ -139,10 +90,15 @@ void loop() {
       incomingPacket[len] = 0;
     }
     
+    Serial.print("Received packet: ");
+    Serial.println(incomingPacket);
+    
     if (strncmp(incomingPacket, "!ROB#", 5) == 0) {
       parseRobData(incomingPacket);
     }
   }
+  
+  delay(10); // Small delay to prevent overwhelming
 }
 
 void parseRobData(char* data) {
@@ -156,11 +112,11 @@ void parseRobData(char* data) {
   token = strtok(p, ":?");
   while (token != NULL && i < 8) {
     values[i++] = atoi(token);
-    token = strtok(NULL, ":?");
     Serial.print("Value ");
     Serial.print(i-1);
     Serial.print(": ");
     Serial.println(values[i-1]);
+    token = strtok(NULL, ":?");
   }
 
   if (i >= 2) {  // Only need first 2 values for basic control
@@ -180,8 +136,14 @@ void parseRobData(char* data) {
     Serial.print(", Right Motor: ");
     Serial.println(rightMotorSpeed);
 
-    writePWM(leftMotorChannel, leftMotorSpeed);
-    writePWM(rightMotorChannel, rightMotorSpeed);
+    // Simple PWM output - this should work with most ESP32 cores
+    analogWrite(leftMotorPin, leftMotorSpeed);
+    analogWrite(rightMotorPin, rightMotorSpeed);
+    
+    // Fallback if analogWrite doesn't work
+    digitalWrite(leftMotorPin, (leftMotorSpeed > 127) ? HIGH : LOW);
+    digitalWrite(rightMotorPin, (rightMotorSpeed > 127) ? HIGH : LOW);
+    
   } else {
     Serial.println("Insufficient data received");
   }
