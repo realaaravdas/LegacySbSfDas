@@ -1,10 +1,13 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <Arduino.h>
+#include <string.h>
+#include <stdlib.h>
 #include "transform.h"
 
 // WiFi network credentials
-const char* ssid = "YOUR_SSID";
-const char* password = "YOUR_PASSWORD";
+const char* ssid = "ROBOTWIFINET";
+const char* password = "robo8711$$W";
 
 // UDP settings
 WiFiUDP broadcastUdp;
@@ -12,12 +15,12 @@ WiFiUDP dataUdp;
 const int broadcastPort = 2367;
 const int dataPort = 2380;
 char incomingPacket[255];
-const char* robotName = "minibot";
+const char* robotName = "minibotTestingDas";
 
 
 // Motor pins
 int leftMotorPin = 16;
-int rightMotorPin = 17;
+int rightMotorPin = 19;
 
 // PWM settings
 const int pwmFreq = 5000;
@@ -84,6 +87,7 @@ void loop() {
 }
 
 void parseRobData(char* data) {
+  Serial.println("Parsing robot data...");
   char* p = data;
   p += 5; // Skip "!ROB#"
   char* token;
@@ -94,16 +98,32 @@ void parseRobData(char* data) {
   while (token != NULL && i < 8) {
     values[i++] = atoi(token);
     token = strtok(NULL, ":?");
+    Serial.print("Value ");
+    Serial.print(i-1);
+    Serial.print(": ");
+    Serial.println(values[i-1]);
   }
 
-  if (i == 8) {
+  if (i >= 2) {  // Only need first 2 values for basic control
     int leftY = values[0];
     int rightX = values[1];
+    
+    Serial.print("Left Y: ");
+    Serial.print(leftY);
+    Serial.print(", Right X: ");
+    Serial.println(rightX);
     
     int leftMotorSpeed, rightMotorSpeed;
     transformer.transform(leftY, rightX, leftMotorSpeed, rightMotorSpeed);
 
+    Serial.print("Left Motor: ");
+    Serial.print(leftMotorSpeed);
+    Serial.print(", Right Motor: ");
+    Serial.println(rightMotorSpeed);
+
     ledcWrite(leftMotorChannel, leftMotorSpeed);
     ledcWrite(rightMotorChannel, rightMotorSpeed);
+  } else {
+    Serial.println("Insufficient data received");
   }
 }

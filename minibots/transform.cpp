@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "transform.h"
 
 Transform::Transform(bool invert_left_axis, bool invert_right_axis) {
